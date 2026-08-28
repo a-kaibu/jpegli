@@ -1,0 +1,102 @@
+name: Linux static binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-x86_64:
+    name: Linux x86_64 static
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            binutils \
+            clang \
+            cmake \
+            libgif-dev \
+            libjpeg-dev \
+            libpng-dev \
+            libwebp-dev \
+            ninja-build \
+            pkg-config
+
+      - name: Build static binaries
+        env:
+          CC: clang
+          CXX: clang++
+          SKIP_TEST: '1'
+          TARGETS: cjpegli djpegli
+        run: |
+          ./ci.sh release \
+            -DBUILD_TESTING=OFF \
+            -DJPEGLI_STATIC=ON \
+            -DJPEGLI_ENABLE_BENCHMARK=OFF \
+            -DJPEGLI_ENABLE_DEVTOOLS=OFF \
+            -DJPEGLI_ENABLE_DOXYGEN=OFF \
+            -DJPEGLI_ENABLE_FUZZERS=OFF \
+            -DJPEGLI_ENABLE_JNI=OFF \
+            -DJPEGLI_ENABLE_JPEGLI_LIBJPEG=OFF \
+            -DJPEGLI_ENABLE_MANPAGES=OFF \
+            -DJPEGLI_ENABLE_OPENEXR=OFF
+
+      - name: Verify and package binaries
+        run: |
+          set -euo pipefail
+
+          for binary in cjpegli djpegli; do
+            path="build/tools/${binary}"
+            test -x "${path}"
+
+            if readelf --program-headers "${path}" | grep -q INTERP; then
+              echo "${path} contains a dynamic interpreter" >&2
+              exit 1
+            fi
+            if readelf --dynamic "${path}" 2>/dev/null | grep -q NEEDED; then
+              echo "${path} contains dynamic dependencies" >&2
+              exit 1
+            fi
+
+            "${path}" --help >/dev/null
+            strip "${path}"
+          done
+
+          package_dir="dist/jpegli-linux-x86_64-static"
+          mkdir -p "${package_dir}"
+          install -m 0755 build/tools/cjpegli build/tools/djpegli "${package_dir}/"
+          install -m 0644 LICENSE "${package_dir}/"
+
+          tar -C dist -czf dist/jpegli-linux-x86_64-static.tar.gz \
+            jpegli-linux-x86_64-static
+          sha256sum dist/jpegli-linux-x86_64-static.tar.gz \
+            > dist/jpegli-linux-x86_64-static.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jpegli-linux-x86_64-static
+          path: |
+            dist/jpegli-linux-x86_64-static.tar.gz
+            dist/jpegli-linux-x86_64-static.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
