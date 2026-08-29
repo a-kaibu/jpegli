@@ -100,3 +100,42 @@ jobs:
             dist/jpegli-linux-x86_64-static.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Publish GitHub release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: linux-x86_64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download static binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jpegli-linux-x86_64-static
+          path: release-assets
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          assets=(
+            release-assets/jpegli-linux-x86_64-static.tar.gz
+            release-assets/jpegli-linux-x86_64-static.tar.gz.sha256
+          )
+
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "jpegli ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
